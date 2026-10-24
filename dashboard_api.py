@@ -4,8 +4,8 @@ import urllib.request
 
 PROJECTS = [
     "YouTube RankPeak",
-    "YouTube Auramint AI",
-    "YouTube Animal Vibes",
+    "YouTube Brand Stories",
+    "YouTube Channel 3",
     "AI Resume Website",
     "Money-Making App",
     "Affiliate Marketing",
