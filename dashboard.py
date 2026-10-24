@@ -1,256 +1,418 @@
+import hmac
+import http.client
 import http.server
-import socketserver
 import json
-import urllib.parse
 import os
 import secrets
-import time
-import hmac
 import sys
+import threading
+import time
+import urllib.parse
 from http import cookies
 
-# Ensure current directory is in path
 sys.path.append(os.getcwd())
-import approval_gate
+from dashboard_api import DashboardApi
 from model_client import load_env
 
-# Configuration
 HOST = "127.0.0.1"
 PORT = 8000
 NO_LOGIN = "--no-login" in sys.argv
-
-# 1) Get DASHBOARD_PASSWORD only through load_env() from model_client.py.
-# Remove default password admin123 and code that opens .env.
 DASHBOARD_PASSWORD = ""
-if not NO_LOGIN and "--test" not in sys.argv:
-    try:
-        env = load_env()
-        DASHBOARD_PASSWORD = env.get("DASHBOARD_PASSWORD", "")
-    except Exception:
-        DASHBOARD_PASSWORD = ""
+API = None
+MAX_BODY = 200000
+MIN_PASSWORD = 8
 
-    if not DASHBOARD_PASSWORD or len(DASHBOARD_PASSWORD) < 8:
-        print("ERROR: DASHBOARD_PASSWORD missing or shorter than 8 characters.")
-        sys.exit(1)
-elif NO_LOGIN and "--test" not in sys.argv:
-    # Flag --no-login requires HOST to be 127.0.0.1
-    if HOST != "127.0.0.1":
-        print("ERROR: --no-login flag is only allowed when HOST is 127.0.0.1")
-        sys.exit(1)
-
-# In-memory session store & IP rate limiter
 SESSIONS = set()
-FAILED_ATTEMPTS = {}  # ip -> list of timestamps
+FAILED_ATTEMPTS = {}
+LOCK = threading.Lock()
 
-# 2) Replace forbidden-files list with an allowlist. Serve only dashboard.html, dashboard.css, dashboard.js.
-# Any other path returns 404, including paths containing .. or / or backslash or %.
-ALLOWLIST = {"/", "/dashboard.html", "/dashboard.css", "/dashboard.js"}
+HTML_ENTRY = ("dashboard.html", "text/html; charset=utf-8")
+STATIC = {
+    "/": HTML_ENTRY,
+    "/dashboard.html": HTML_ENTRY,
+    "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
+    "/dashboard.js": ("dashboard.js", "application/javascript; charset=utf-8"),
+}
+BAD_CHARS = ("..", "\\", "%")
+
+
+def check_config(password, no_login, host):
+    if no_login:
+        if host != "127.0.0.1":
+            return "ERROR: --no-login is only allowed when HOST is 127.0.0.1"
+        return None
+    if not password or len(password) < MIN_PASSWORD:
+        return "ERROR: DASHBOARD_PASSWORD is missing or shorter than 8 characters."
+    return None
+
 
 def is_rate_limited(ip):
     now = time.time()
-    attempts = FAILED_ATTEMPTS.get(ip, [])
-    attempts = [t for t in attempts if now - t < 60]
-    FAILED_ATTEMPTS[ip] = attempts
-    return len(attempts) >= 5
+    with LOCK:
+        attempts = [t for t in FAILED_ATTEMPTS.get(ip, []) if now - t < 60]
+        FAILED_ATTEMPTS[ip] = attempts
+        return len(attempts) >= 5
+
 
 def record_failed_attempt(ip):
-    now = time.time()
-    attempts = FAILED_ATTEMPTS.get(ip, [])
-    attempts.append(now)
-    FAILED_ATTEMPTS[ip] = attempts
+    with LOCK:
+        FAILED_ATTEMPTS.setdefault(ip, []).append(time.time())
 
-class DashboardHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, format, *args): pass
 
-    def send_json(self, data, status=200):
+def cookie_token(header):
+    try:
+        jar = cookies.SimpleCookie(header or "")
+    except cookies.CookieError:
+        return ""
+    morsel = jar.get("session_id")
+    return morsel.value if morsel else ""
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = False
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    server_version = "MAY"
+    sys_version = ""
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def security_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+
+    def send_json(self, data, status=200, extra=None):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.security_headers()
+        for key, value in (extra or []):
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
-    def do_HEAD(self): self.do_GET()
-
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-
-        # Strict allowlist check + any path containing .. or backslash or % returns 404.
-        if path not in ALLOWLIST or any(c in path for c in ["..", "\\", "%"]):
-            self.send_json({"error": "Not found"}, status=404)
-            return
-
-        if path == "/":
-            path = "/dashboard.html"
-
-        if path in ["/dashboard.html", "/dashboard.css", "/dashboard.js"]:
-            self.serve_file(path.lstrip("/"), "text/html" if path.endswith(".html") else "text/css" if path.endswith(".css") else "application/javascript")
-            return
-
-        self.send_json({"error": "Not found"}, status=404)
-
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        client_ip = self.client_address[0]
-
-        content_length = int(self.headers.get("Content-Length", 0))
-        body_bytes = self.rfile.read(content_length) if content_length > 0 else b""
-        try: data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
-        except: data = {}
-
-        if path == "/api/login":
-            if NO_LOGIN:
-                # With --no-login, login always succeeds
-                session_id = "no-login-session"
-                self.send_response(200)
-                self.send_header("Set-Cookie", f"session_id={session_id}; HttpOnly; SameSite=Strict; Path=/")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "success"}).encode("utf-8"))
-                return
-
-            if is_rate_limited(client_ip):
-                self.send_json({"error": "Too many failed attempts"}, status=429)
-                return
-            if hmac.compare_digest(data.get("password", ""), DASHBOARD_PASSWORD):
-                session_id = secrets.token_hex(16)
-                SESSIONS.add(session_id)
-                self.send_response(200)
-                self.send_header("Set-Cookie", f"session_id={session_id}; HttpOnly; SameSite=Strict; Path=/")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "success"}).encode("utf-8"))
-            else:
-                record_failed_attempt(client_ip)
-                self.send_json({"error": "Invalid password"}, status=401)
-            return
-
-        self.send_json({"error": "Not found"}, status=404)
-
     def serve_file(self, filename, content_type):
-        if not os.path.exists(filename):
-            self.send_json({"error": "Not found"}, status=404)
-            return
+        if not os.path.isfile(filename):
+            return self.send_json({"error": "Not found"}, 404)
         with open(filename, "rb") as f:
             content = f.read()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
+        self.security_headers()
         self.end_headers()
         self.wfile.write(content)
 
-import io
-from http.client import HTTPMessage
+    def host_ok(self):
+        port = self.server.server_address[1]
+        return self.headers.get("Host", "") in ("127.0.0.1:%d" % port, "localhost:%d" % port)
 
-class TestHandler(DashboardHandler):
-    def __init__(self, request_bytes, client_address=("127.0.0.1", 12345)):
-        self.requests = io.BytesIO(request_bytes)
-        self.rfile = self.requests
-        self.wfile = io.BytesIO()
-        self.client_address = client_address
-        self.server = None
-        first_line = self.requests.readline().decode('utf-8')
-        if not first_line.strip():
-            return
-        self.requestline = first_line.strip()
-        parts = self.requestline.split()
-        self.command = parts[0]
-        self.path = parts[1] if len(parts) > 1 else "/"
-        self.request_version = parts[2] if len(parts) > 2 else "HTTP/1.0"
-        self.headers = HTTPMessage()
-        while True:
-            line = self.requests.readline()
-            if not line or line == b'\r\n' or line == b'\n':
-                break
-            header_line = line.decode('utf-8').strip()
-            if ':' in header_line:
-                k, v = header_line.split(':', 1)
-                self.headers[k.strip()] = v.strip()
+    def origin_ok(self):
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        port = self.server.server_address[1]
+        return origin in ("http://127.0.0.1:%d" % port, "http://localhost:%d" % port)
 
-    def handle_test(self):
-        if self.command == "GET":
-            self.do_GET()
-        elif self.command == "POST":
-            self.do_POST()
-        return self.wfile.getvalue()
+    def authed(self):
+        if NO_LOGIN:
+            return True
+        token = cookie_token(self.headers.get("Cookie", ""))
+        return bool(token) and token in SESSIONS
+
+    def read_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return None, 400
+        if length < 0:
+            return None, 400
+        if length > MAX_BODY:
+            return None, 413
+        raw = self.rfile.read(length) if length else b""
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            return None, 400
+        if not isinstance(data, dict):
+            return None, 400
+        return data, None
+
+    def guard(self, fn):
+        try:
+            fn()
+        except (BrokenPipeError, ConnectionError):
+            pass
+        except Exception:
+            try:
+                self.send_json({"error": "Server error"}, 500)
+            except Exception:
+                pass
+
+    def do_GET(self):
+        self.guard(self._get)
+
+    def do_HEAD(self):
+        self.guard(self._get)
+
+    def do_POST(self):
+        self.guard(self._post)
+
+    def _get(self):
+        if not self.host_ok():
+            return self.send_json({"error": "Forbidden"}, 403)
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if any(c in path for c in BAD_CHARS):
+            return self.send_json({"error": "Not found"}, 404)
+        if path.startswith("/api/"):
+            if path == "/api/session":
+                return self.send_json({"logged_in": self.authed(), "no_login": NO_LOGIN})
+            if not self.authed():
+                return self.send_json({"error": "Login required"}, 401)
+            query = {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
+            code, body = API.handle("GET", path, query)
+            return self.send_json(body, code)
+        entry = STATIC.get(path)
+        if entry is None:
+            return self.send_json({"error": "Not found"}, 404)
+        return self.serve_file(entry[0], entry[1])
+
+    def _post(self):
+        if not self.host_ok() or not self.origin_ok():
+            return self.send_json({"error": "Forbidden"}, 403)
+        path = urllib.parse.urlparse(self.path).path
+        if any(c in path for c in BAD_CHARS) or not path.startswith("/api/"):
+            return self.send_json({"error": "Not found"}, 404)
+        ctype = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            return self.send_json({"error": "Content-Type must be application/json"}, 415)
+        data, problem = self.read_body()
+        if problem:
+            return self.send_json({"error": "Bad request body"}, problem)
+        ip = self.client_address[0]
+        if path == "/api/login":
+            return self.login(data, ip)
+        if path == "/api/logout":
+            return self.logout()
+        if not self.authed():
+            return self.send_json({"error": "Login required"}, 401)
+        code, body = API.handle("POST", path, data)
+        return self.send_json(body, code)
+
+    def login(self, data, ip):
+        if NO_LOGIN:
+            return self.send_json({"status": "success", "no_login": True})
+        if is_rate_limited(ip):
+            return self.send_json({"error": "Too many failed attempts, wait a minute"}, 429)
+        password = data.get("password", "")
+        if not isinstance(password, str):
+            password = ""
+        good = bool(DASHBOARD_PASSWORD) and hmac.compare_digest(
+            password.encode("utf-8"), DASHBOARD_PASSWORD.encode("utf-8"))
+        if not good:
+            record_failed_attempt(ip)
+            return self.send_json({"error": "Invalid password"}, 401)
+        token = secrets.token_hex(16)
+        with LOCK:
+            SESSIONS.add(token)
+            FAILED_ATTEMPTS.pop(ip, None)
+        cookie = "session_id=%s; HttpOnly; SameSite=Strict; Path=/" % token
+        return self.send_json({"status": "success"}, 200, [("Set-Cookie", cookie)])
+
+    def logout(self):
+        token = cookie_token(self.headers.get("Cookie", ""))
+        with LOCK:
+            SESSIONS.discard(token)
+        expire = "session_id=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+        return self.send_json({"status": "logged out"}, 200, [("Set-Cookie", expire)])
+
+
+def main():
+    global DASHBOARD_PASSWORD, API
+    if not NO_LOGIN:
+        try:
+            DASHBOARD_PASSWORD = str(load_env().get("DASHBOARD_PASSWORD", ""))
+        except Exception:
+            DASHBOARD_PASSWORD = ""
+    problem = check_config(DASHBOARD_PASSWORD, NO_LOGIN, HOST)
+    if problem:
+        print(problem)
+        sys.exit(1)
+    if NO_LOGIN:
+        print("WARNING: --no-login is on. Anyone using this laptop can use the dashboard.")
+    API = DashboardApi()
+    try:
+        server = Server((HOST, PORT), Handler)
+    except OSError:
+        print("ERROR: could not start on port " + str(PORT) + ". Is the old dashboard still running? Press Ctrl+C in its window first.")
+        sys.exit(1)
+    print("MAY running on http://" + HOST + ":" + str(PORT))
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        server.server_close()
+
+
+def make_test_api(pending=None):
+    store = list(pending or [])
+    log = {"approve": [], "reject": [], "add": 0}
+
+    def run(project, request, notes, gate_fn=None):
+        gate_id = gate_fn(project, "Writer", {})
+        return {"route": "writer", "writer_result": {"title": "T"},
+                "checker_verdict": {"verdict": "APPROVE"}, "gate_id": gate_id, "error": None}
+
+    def add(project, request_type, payload):
+        log["add"] += 1
+        return 7
+
+    def lst():
+        return [{"id": i} for i in store]
+
+    def approve(i):
+        log["approve"].append(i)
+        return True
+
+    def reject(i):
+        log["reject"].append(i)
+        return True
+
+    api = DashboardApi(run_fn=run, add_fn=add, list_fn=lst, approve_fn=approve,
+                       reject_fn=reject, link_fn=lambda: True, background=False)
+    return api, log
+
+
+def call(port, method, path, body=None, headers=None, host=None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.putrequest(method, path, skip_host=True)
+    conn.putheader("Host", host or ("127.0.0.1:%d" % port))
+    hdrs = dict(headers or {})
+    payload = None
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
+        hdrs.setdefault("Content-Type", "application/json")
+    if method == "POST" and "Content-Length" not in hdrs:
+        hdrs["Content-Length"] = str(len(payload or b""))
+    for key, value in hdrs.items():
+        conn.putheader(key, value)
+    conn.endheaders(payload)
+    resp = conn.getresponse()
+    raw = resp.read()
+    status = resp.status
+    cookie = resp.getheader("Set-Cookie")
+    conn.close()
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        parsed = None
+    return status, parsed, cookie
+
 
 def run_tests():
-    global DASHBOARD_PASSWORD, NO_LOGIN, HOST
-    print("Running dashboard.py tests...")
+    global DASHBOARD_PASSWORD, NO_LOGIN, API
+    results = []
 
-    # Test 1: Flag with 127.0.0.1 allowed
-    print("Test: flag with 127.0.0.1 allowed")
-    current_host = "127.0.0.1"
-    if current_host == "127.0.0.1":
-        print("flag with 127.0.0.1 allowed: PASS")
-    else:
-        print("flag with 127.0.0.1 allowed: FAIL")
+    def check(name, ok):
+        print(("PASS" if ok else "FAIL") + " | " + name)
+        results.append(bool(ok))
 
-    # Test 2: Flag with another host refused
-    print("Test: flag with another host refused")
-    other_host = "0.0.0.0"
-    if other_host != "127.0.0.1":
-        # Simulating check logic
-        print("flag with another host refused: PASS")
-    else:
-        print("flag with another host refused: FAIL")
+    check("missing password refuses to start", check_config("", False, "127.0.0.1") is not None)
+    check("short password refuses to start", check_config("short", False, "127.0.0.1") is not None)
+    check("--no-login with another host is refused", check_config("", True, "0.0.0.0") is not None)
+    check("--no-login on 127.0.0.1 is allowed", check_config("", True, "127.0.0.1") is None)
+    check("a good password is allowed", check_config("longenough1", False, "127.0.0.1") is None)
 
-    # Test 3: No flag still requires login
-    print("Test: no flag still requires login")
-    old_no_login = NO_LOGIN
+    saved = (DASHBOARD_PASSWORD, NO_LOGIN, API)
+    DASHBOARD_PASSWORD = "test-password-123"
     NO_LOGIN = False
-    test_password = "secure_test_password"
-    DASHBOARD_PASSWORD = test_password
-    payload = json.dumps({"password": "wrongpassword"})
-    req_data = f"POST /api/login HTTP/1.1\r\nContent-Length: {len(payload)}\r\n\r\n{payload}".encode('utf-8')
-    handler = TestHandler(req_data)
-    response = handler.handle_test()
-    if b"401 Unauthorized" in response:
-        print("no flag still requires login: PASS")
-    else:
-        print(f"no flag still requires login: FAIL (Response: {response})")
+    API, log = make_test_api(pending=[5])
+    FAILED_ATTEMPTS.clear()
+    server = Server((HOST, 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        code, body, cookie = call(port, "GET", "/api/status")
+        check("API without login gives 401", code == 401)
 
-    # Verify correct password still works without flag
-    payload_ok = json.dumps({"password": test_password})
-    req_data_ok = f"POST /api/login HTTP/1.1\r\nContent-Length: {len(payload_ok)}\r\n\r\n{payload_ok}".encode('utf-8')
-    handler_ok = TestHandler(req_data_ok)
-    response_ok = handler_ok.handle_test()
-    if b"200 OK" in response_ok:
-        print("correct test password accepted: PASS")
-    else:
-        print(f"correct test password accepted: FAIL")
+        code, body, cookie = call(port, "POST", "/api/login", {"password": "wrong"})
+        check("wrong password gives 401", code == 401)
 
-    # Test 4: Traversal / forbidden paths return 404
-    bad_paths = [
-        "/.env",
-        "/model_client.py",
-        "/dashboard.py",
-        "/.git/config",
-        "/README.md",
-        "/..%2f...%2fetc%2fpasswd",
-        "/dashboard.html/../secret"
-    ]
-    for path in bad_paths:
-        req_data = f"GET {path} HTTP/1.1\r\n\r\n".encode('utf-8')
-        handler = TestHandler(req_data)
-        response = handler.handle_test()
-        if b"404 Not Found" in response:
-            print(f"Path {path} -> 404: PASS")
-        else:
-            print(f"Path {path} -> 404: FAIL")
+        code, body, cookie = call(port, "POST", "/api/login", {"password": "h\u00e9llo"})
+        check("non-English wrong password gives 401, no crash", code == 401)
 
-    NO_LOGIN = old_no_login
-    print("All tests completed.")
+        code, body, cookie = call(port, "POST", "/api/login", {"password": "test-password-123"})
+        check("right password gives 200 and a session cookie", code == 200 and bool(cookie) and "HttpOnly" in cookie)
+        session = {"Cookie": (cookie or "").split(";")[0]}
+
+        code, body, cookie2 = call(port, "GET", "/api/status", headers=session)
+        check("status with a session works and lists 7 projects", code == 200 and len(body["projects"]) == 7)
+
+        code, body, cookie2 = call(port, "POST", "/api/submit", {"project": "Ebooks", "request": "Write a script", "notes": "n"}, headers=session)
+        task_id = body.get("task_id") if isinstance(body, dict) else None
+        check("submit returns a task id", code == 200 and task_id is not None)
+
+        code, body, cookie2 = call(port, "GET", "/api/task?id=" + str(task_id), headers=session)
+        check("the task finishes as done", code == 200 and body["status"] == "done")
+
+        code, body, cookie2 = call(port, "POST", "/api/approve", {"id": 99}, headers=session)
+        check("approving an unknown id gives 404 and changes nothing", code == 404 and log["approve"] == [])
+
+        code, body, cookie2 = call(port, "POST", "/api/approve", {"id": 5}, headers=session)
+        check("approving a pending item works", code == 200 and log["approve"] == [5])
+
+        code, body, cookie2 = call(port, "POST", "/api/logout", {}, headers=session)
+        code2, body2, cookie3 = call(port, "GET", "/api/status", headers=session)
+        check("after logout the old session gives 401", code == 200 and code2 == 401)
+
+        for bad in ["/.env", "/model_client.py", "/dashboard.py", "/dashboard_api.py", "/.git/config",
+                    "/README.md", "/may_agents.db", "/..%2f..%2fetc%2fpasswd", "/dashboard.html/../secret"]:
+            code, body, cookie2 = call(port, "GET", bad)
+            check("blocked path " + bad + " gives 404", code == 404)
+
+        code, body, cookie2 = call(port, "GET", "/dashboard.html")
+        check("dashboard.html is served", code == 200)
+
+        code, body, cookie2 = call(port, "GET", "/api/session", host="evil.example")
+        check("a wrong Host header gives 403", code == 403)
+
+        code, body, cookie2 = call(port, "POST", "/api/login", {"password": "x"}, headers={"Origin": "http://evil.example"})
+        check("a wrong Origin header gives 403", code == 403)
+
+        code, body, cookie2 = call(port, "POST", "/api/login", None, headers={"Content-Type": "text/plain"})
+        check("a non-JSON POST gives 415", code == 415)
+
+        code, body, cookie2 = call(port, "POST", "/api/login", None, headers={"Content-Type": "application/json", "Content-Length": "9999999"})
+        check("an oversized body gives 413", code == 413)
+
+        FAILED_ATTEMPTS.clear()
+        for i in range(5):
+            call(port, "POST", "/api/login", {"password": "wrong"})
+        code, body, cookie2 = call(port, "POST", "/api/login", {"password": "test-password-123"})
+        check("after 5 wrong tries even the right password gets 429", code == 429)
+
+        NO_LOGIN = True
+        code, body, cookie2 = call(port, "GET", "/api/status")
+        check("with --no-login the API is open", code == 200)
+    finally:
+        server.shutdown()
+        server.server_close()
+        DASHBOARD_PASSWORD, NO_LOGIN, API = saved
+        FAILED_ATTEMPTS.clear()
+
+    print(str(sum(results)) + " / " + str(len(results)) + " passed")
+
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
         run_tests()
     else:
-        if NO_LOGIN:
-            if HOST != "127.0.0.1":
-                print("ERROR: --no-login flag is only allowed when HOST is 127.0.0.1")
-                sys.exit(1)
-            print("WARNING: --no-login flag enabled. Authentication is disabled!")
-        server = socketserver.TCPServer((HOST, PORT), DashboardHandler)
-        print(f"MAY running on http://{HOST}:{PORT}")
-        server.serve_forever()
+        main()
