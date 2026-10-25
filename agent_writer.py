@@ -1,8 +1,9 @@
 import json
 import sys
-from model_client import ask, load_env
+from model_client import ask_chain, env_list, ModelError, redact
 
-DEFAULT_WRITER_MODEL = "gemini-3.8-flash"
+DEFAULT_WRITER_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-flash"]
+MAX_MODEL_CALLS = 4
 
 WRITER_PROMPT = (
     "You are the Writer. Write a short video script using ONLY the SOURCE NOTES given. "
@@ -18,12 +19,8 @@ def clean(text):
     return " ".join(str(text).lower().split())
 
 
-def writer_model():
-    try:
-        value = str(load_env().get("WRITER_MODEL", "")).strip()
-    except Exception:
-        value = ""
-    return value or DEFAULT_WRITER_MODEL
+def writer_models(env=None):
+    return env_list("WRITER_MODELS", DEFAULT_WRITER_MODELS, env=env)
 
 
 def repeated_phrases(text, n=5):
@@ -39,14 +36,17 @@ def repeated_phrases(text, n=5):
     return repeats
 
 
-def write(topic, notes, ask_fn=None, model=None):
-    ask_fn = ask_fn or ask
-    model = model or writer_model()
+def write(topic, notes, chain_fn=None, models=None):
+    chain_fn = chain_fn or ask_chain
+    models = models or writer_models()
     prompt = "TOPIC: " + topic + "\n\nSOURCE NOTES:\n" + notes
     try:
-        reply = ask_fn(prompt, system_prompt=WRITER_PROMPT, model=model)
+        res = chain_fn(prompt, system_prompt=WRITER_PROMPT, models=models, max_calls=MAX_MODEL_CALLS)
+    except ModelError as e:
+        return {"error": "Writer model call failed: " + redact(str(e))}
     except Exception as e:
-        return {"error": "Writer model call failed: " + str(e)}
+        return {"error": "Writer model call failed: " + redact(type(e).__name__ + ": " + str(e))}
+    reply = str(res.get("text", ""))
     start = reply.find("{")
     end = reply.rfind("}")
     try:
@@ -82,7 +82,9 @@ def write(topic, notes, ask_fn=None, model=None):
         "verified": verified,
         "not_found": not_found,
         "repeats": repeated_phrases(script),
-        "model": model,
+        "model": res.get("model", ""),
+        "attempts": res.get("attempts", []),
+        "calls": res.get("calls", 0),
     }
 
 
@@ -96,13 +98,20 @@ def run_tests():
         print(("PASS" if ok else "FAIL") + " | " + name)
         results.append(bool(ok))
 
-    def stub(text):
-        def fake(prompt, system_prompt=None, model=None):
-            return text
-        return fake
+    def fake_chain(text, model="m1", attempts=None, record=None):
+        def chain(prompt, system_prompt=None, models=None, max_calls=None, **kw):
+            if record is not None:
+                record["models"] = models
+                record["max_calls"] = max_calls
+                record["prompt"] = prompt
+            return {"text": text, "model": model, "calls": 1,
+                    "attempts": attempts or [{"model": model, "result": "ok"}]}
+        return chain
 
-    def boom(prompt, system_prompt=None, model=None):
-        raise RuntimeError("down")
+    def failing_chain(exc):
+        def chain(prompt, system_prompt=None, models=None, max_calls=None, **kw):
+            raise exc
+        return chain
 
     good = json.dumps({
         "title": "T",
@@ -112,22 +121,22 @@ def run_tests():
             {"claim": "released in 2024", "quote": "It was released in 2024."},
         ],
     })
-    r = write("Tool X", NOTES, ask_fn=stub(good), model="test")
+    r = write("Tool X", NOTES, chain_fn=fake_chain(good, model="m9"))
     check("valid quotes are verified and the model is recorded",
-          r.get("verified") == 2 and r.get("not_found") == 0 and r.get("model") == "test")
+          r.get("verified") == 2 and r.get("not_found") == 0 and r.get("model") == "m9")
     check("a clean script reports no repeats", r.get("repeats") == 0)
 
     bad = json.dumps({"title": "T", "script": "x", "claims": [{"claim": "price", "quote": "Tool X costs 5 euros a month."}]})
-    r = write("Tool X", NOTES, ask_fn=stub(bad), model="test")
+    r = write("Tool X", NOTES, chain_fn=fake_chain(bad))
     check("an invented quote is marked NOT FOUND",
           r.get("not_found") == 1 and r["claims"][0]["source"] == "NOT FOUND")
 
     empty = json.dumps({"title": "T", "script": "x", "claims": [{"claim": "c", "quote": ""}]})
-    r = write("Tool X", NOTES, ask_fn=stub(empty), model="test")
+    r = write("Tool X", NOTES, chain_fn=fake_chain(empty))
     check("an empty quote is NOT FOUND", r.get("not_found") == 1)
 
     loose = json.dumps({"title": "T", "script": "x", "claims": [{"claim": "c", "quote": "tool x   WORKS on windows and phone."}]})
-    r = write("Tool X", NOTES, ask_fn=stub(loose), model="test")
+    r = write("Tool X", NOTES, chain_fn=fake_chain(loose))
     check("quotes match ignoring case and spacing", r.get("verified") == 1)
 
     padded = json.dumps({
@@ -135,23 +144,47 @@ def run_tests():
         "script": "Tool X is a free note-taking app. It works on Windows. Remember that Tool X is a free note-taking app. Thanks for watching.",
         "claims": [],
     })
-    r = write("Tool X", NOTES, ask_fn=stub(padded), model="test")
+    r = write("Tool X", NOTES, chain_fn=fake_chain(padded))
     check("a repeated phrase is reported", r.get("repeats", 0) > 0)
 
-    r = write("Tool X", NOTES, ask_fn=stub("not json at all"), model="test")
+    r = write("Tool X", NOTES, chain_fn=fake_chain("not json at all"))
     check("invalid JSON gives an error", "error" in r)
 
-    r = write("Tool X", NOTES, ask_fn=boom, model="test")
-    check("a model failure gives an error, not a crash", "error" in r)
+    r = write("Tool X", NOTES, chain_fn=failing_chain(ModelError("All models failed (a: HTTP 502)")))
+    check("a model failure gives an error, not a crash", "error" in r and "All models failed" in r["error"])
+
+    r = write("Tool X", NOTES, chain_fn=failing_chain(ValueError("odd")))
+    check("an unexpected exception gives an error, not a crash", "error" in r)
+
+    tries = [{"model": "a", "result": "HTTP 429"}, {"model": "b", "result": "ok"}]
+    r = write("Tool X", NOTES, chain_fn=fake_chain(good, model="b", attempts=tries))
+    check("the fallback attempts are passed through", r.get("model") == "b" and len(r.get("attempts", [])) == 2)
+
+    seen = {}
+    write("Tool X", NOTES, chain_fn=fake_chain(good, record=seen), models=["x", "y"])
+    check("the model list, call cap and notes reach the chain",
+          seen.get("models") == ["x", "y"] and seen.get("max_calls") == 4 and "SOURCE NOTES" in seen.get("prompt", "") and "free note-taking" in seen.get("prompt", ""))
+
+    check("the default Writer models are Gemini only, so the Checker's provider stays different",
+          DEFAULT_WRITER_MODELS[0] == "gemini-3.8-flash" and all(m.startswith("gemini") for m in DEFAULT_WRITER_MODELS))
+
+    check("a Writer model list can be set with a comma list",
+          writer_models(env={"WRITER_MODELS": "a, b"}) == ["a", "b"] and writer_models(env={}) == DEFAULT_WRITER_MODELS)
+
+    r = write("Tool X", NOTES, chain_fn=failing_chain(ModelError("HTTP 502 freellmapi-0123456789abcdef")))
+    check("keys are redacted from error text",
+          "[redacted]" in r.get("error", "") and "0123456789abcdef" not in r.get("error", ""))
 
     print(str(sum(results)) + " / " + str(len(results)) + " passed")
 
 
 def run_live():
-    print("Live test with model: " + writer_model())
+    print("Live test, model list: " + ", ".join(writer_models()))
     r1 = write("Tool X", NOTES)
     ok1 = "error" not in r1 and r1["verified"] >= 1 and len(r1["script"]) > 0
-    print(("PASS" if ok1 else "FAIL") + " | Tool X has verified claims | " + str(r1.get("verified")) + " verified, " + str(r1.get("not_found")) + " not found, repeats " + str(r1.get("repeats")) + " | " + str(r1.get("error", "")))
+    print(("PASS" if ok1 else "FAIL") + " | Tool X has verified claims | model " + str(r1.get("model")) + " | "
+          + str(r1.get("verified")) + " verified, " + str(r1.get("not_found")) + " not found, repeats " + str(r1.get("repeats")) + " | " + str(r1.get("error", "")))
+    print("attempts: " + str(r1.get("attempts")))
     r2 = write("Tool Y pricing in euros", NOTES)
     ok2 = "error" not in r2 and r2["verified"] == 0
     print(("PASS" if ok2 else "FAIL") + " | Tool Y has no verified claims | " + str(r2.get("verified")) + " verified | " + str(r2.get("error", "")))
