@@ -99,7 +99,7 @@
   function tickClock() {
     var d = new Date(), h = d.getHours();
     var g = h < 12 ? "Good morning" : (h < 18 ? "Good afternoon" : "Good evening");
-    $("greeting").textContent = g + ", Operator";
+    $("greeting").textContent = g + ", Sridhar";
     $("clock").textContent = d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }) + "   |   " + d.toLocaleTimeString();
   }
 
