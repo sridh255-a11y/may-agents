@@ -1,4 +1,4 @@
-﻿
+
 import json
 import os
 import re
@@ -278,7 +278,7 @@ def run_tests():
 
 
 def run_live():
-    reply = ask("Reply with the single word OK.")
+    reply = ask("Reply with the single word OK.", system_prompt="You are a connection test. Follow the user instruction exactly.")
     print("OK" if "OK" in reply.upper() else redact(reply))
 
 
