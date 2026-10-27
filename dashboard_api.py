@@ -35,6 +35,11 @@ def _real_run(project, request, notes, gate_fn=None):
     return pipeline.run_request(project, request, notes, gate_fn=gate_fn)
 
 
+def _real_plan(project, request, notes, gate_fn=None):
+    import dashboard_plan
+    return dashboard_plan.run_plan(project, request, notes, gate_fn=gate_fn)
+
+
 def _real_add(project, request_type, payload):
     import approval_gate
     return approval_gate.add_request(project, request_type, payload)
@@ -72,8 +77,8 @@ def _to_int(value):
 
 
 class DashboardApi:
-    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True):
-        self.run_fn = run_fn or _real_run
+    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None):
+        self.run_fn = run_fn or _real_run; self.plan_fn = plan_fn or _real_plan
         self.add_fn = add_fn or _real_add
         self.list_fn = list_fn or _real_list
         self.approve_fn = approve_fn or _real_approve
@@ -127,8 +132,8 @@ class DashboardApi:
     def submit(self, data):
         project = data.get("project")
         request = data.get("request")
-        notes = data.get("notes", "")
-        if project not in PROJECTS:
+        notes = data.get("notes", ""); mode = data.get("mode", "run")
+        if project not in PROJECTS or mode not in ("run", "plan"):
             return 400, {"error": "Unknown project"}
         if not isinstance(request, str) or not request.strip():
             return 400, {"error": "Request is empty"}
@@ -145,7 +150,7 @@ class DashboardApi:
             self.tasks[task_id] = {
                 "id": task_id,
                 "project": project,
-                "request": request.strip(),
+                "request": request.strip(), "mode": mode,
                 "notes": notes,
                 "status": "queued",
                 "cancelled": False,
@@ -175,7 +180,7 @@ class DashboardApi:
             return self.add_fn(project, request_type, payload)
 
         try:
-            result = self.run_fn(task["project"], task["request"], task["notes"], gate_fn=gate)
+            result = (self.plan_fn if task.get("mode") == "plan" else self.run_fn)(task["project"], task["request"], task["notes"], gate_fn=gate)
         except Exception as e:
             result = {"error": type(e).__name__ + ": " + str(e)}
         with self.lock:
