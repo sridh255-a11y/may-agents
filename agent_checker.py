@@ -90,7 +90,7 @@ def check_writer_output(writer_result, source_notes, chain_fn=None, models=None)
     issues, unsupported = code_checks(writer_result, source_notes)
     if issues:
         return {"verdict": "REJECT", "issues": issues, "unsupported_claims": unsupported,
-                "model": "code checks only", "calls": 0}
+                "model": "code checks only", "calls": 0, "provider": "", "family": ""}
     prompt = (
         "BEGIN SOURCE NOTES\n" + str(source_notes) + "\nEND SOURCE NOTES\n\n"
         "BEGIN WRITER RESULT\n" + json.dumps(writer_result, indent=2) + "\nEND WRITER RESULT\n\n"
@@ -98,7 +98,7 @@ def check_writer_output(writer_result, source_notes, chain_fn=None, models=None)
     )
     res = chain_fn(prompt, system_prompt=CHECKER_SYSTEM, models=models, max_calls=MAX_MODEL_CALLS)
     out = {"verdict": "REJECT", "issues": [], "unsupported_claims": [],
-           "model": res.get("model", ""), "calls": res.get("calls", 0)}
+           "model": res.get("model", ""), "calls": res.get("calls", 0), "provider": res.get("provider", ""), "family": res.get("family", "")}
     data = parse_model_json(str(res.get("text", "")))
     if data is None:
         out["issues"].append("The Checker model reply was not valid JSON.")

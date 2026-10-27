@@ -84,7 +84,7 @@ def write(topic, notes, chain_fn=None, models=None):
         "repeats": repeated_phrases(script),
         "model": res.get("model", ""),
         "attempts": res.get("attempts", []),
-        "calls": res.get("calls", 0),
+        "calls": res.get("calls", 0), "provider": res.get("provider", ""), "family": res.get("family", ""),
     }
 
 
