@@ -1,5 +1,4 @@
-
-import json
+﻿import json
 import os
 import re
 import sys
@@ -69,6 +68,13 @@ def env_list(key, default, env=None):
     return items or list(default)
 
 
+def provider_family(via):
+    text = str(via or "").strip().lower()
+    if not text:
+        return ""
+    return text.split("/")[0]
+
+
 def _post(url, api_key, body, timeout):
     req = urllib.request.Request(
         url,
@@ -80,7 +86,8 @@ def _post(url, api_key, body, timeout):
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
+            via = resp.headers.get("X-Routed-Via") or ""
     except urllib.error.HTTPError as e:
         retry_after = None
         try:
@@ -97,6 +104,9 @@ def _post(url, api_key, body, timeout):
         raise ModelError("Connection failed: check FreeLLMAPI is running")
     except ValueError:
         raise ModelError("Bad model response")
+    if isinstance(data, dict):
+        data["_routed_via"] = via
+    return data
 
 
 def _parse(data):
@@ -109,8 +119,14 @@ def _parse(data):
     return text
 
 
-def ask(user_prompt, system_prompt=SYSTEM_RULE, model=None, retries=2, budget=None,
-        post_fn=None, sleep_fn=None, env=None):
+def _via(data):
+    if isinstance(data, dict):
+        return str(data.get("_routed_via", "") or "")
+    return ""
+
+
+def ask_full(user_prompt, system_prompt=SYSTEM_RULE, model=None, retries=2, budget=None,
+             post_fn=None, sleep_fn=None, env=None):
     post_fn = post_fn or _post
     sleep_fn = sleep_fn or time.sleep
     env = env if env is not None else load_env()
@@ -131,13 +147,20 @@ def ask(user_prompt, system_prompt=SYSTEM_RULE, model=None, retries=2, budget=No
         if budget is not None:
             budget.spend()
         try:
-            return _parse(post_fn(url, api_key, body, DEFAULT_TIMEOUT))
+            data = post_fn(url, api_key, body, DEFAULT_TIMEOUT)
+            return {"text": _parse(data), "via": _via(data)}
         except ModelError as e:
             if not e.retryable or attempt >= retries:
                 raise
             wait = e.retry_after if e.retry_after is not None else 2.0 * (2 ** attempt)
             sleep_fn(min(wait, MAX_WAIT))
             attempt += 1
+
+
+def ask(user_prompt, system_prompt=SYSTEM_RULE, model=None, retries=2, budget=None,
+        post_fn=None, sleep_fn=None, env=None):
+    return ask_full(user_prompt, system_prompt, model=model, retries=retries, budget=budget,
+                    post_fn=post_fn, sleep_fn=sleep_fn, env=env)["text"]
 
 
 def ask_chain(user_prompt, system_prompt=SYSTEM_RULE, models=None, budget=None, max_calls=4,
@@ -148,10 +171,11 @@ def ask_chain(user_prompt, system_prompt=SYSTEM_RULE, models=None, budget=None, 
     attempts = []
     for name in names:
         try:
-            text = ask(user_prompt, system_prompt, model=name, retries=0, budget=budget,
-                       post_fn=post_fn, sleep_fn=sleep_fn, env=env)
-            attempts.append({"model": name, "result": "ok"})
-            return {"text": text, "model": name, "calls": budget.used, "attempts": attempts}
+            res = ask_full(user_prompt, system_prompt, model=name, retries=0, budget=budget,
+                           post_fn=post_fn, sleep_fn=sleep_fn, env=env)
+            attempts.append({"model": name, "result": "ok", "via": res["via"]})
+            return {"text": res["text"], "model": name, "provider": res["via"],
+                    "family": provider_family(res["via"]), "calls": budget.used, "attempts": attempts}
         except BudgetExceeded as e:
             attempts.append({"model": name, "result": str(e)})
             break
@@ -170,8 +194,11 @@ def run_tests():
 
     env = {"MODEL_BASE_URL": "http://x/v1", "MODEL_API_KEY": "k", "MODEL_NAME": "auto"}
 
-    def ok(text="hi"):
-        return {"choices": [{"message": {"content": text}}]}
+    def ok(text="hi", via=None):
+        data = {"choices": [{"message": {"content": text}}]}
+        if via is not None:
+            data["_routed_via"] = via
+        return data
 
     def err(status, retry_after=None):
         return ModelError("HTTP %d" % status, status=status, retry_after=retry_after,
@@ -274,12 +301,34 @@ def run_tests():
     r, e = run(lambda: ask("q", env=env, post_fn=post, sleep_fn=lambda s: None))
     check("an empty reply is an error", e is not None)
 
+    post, st = scripted([ok("hi", via="groq/openai/gpt-oss-120b")])
+    r = ask_full("q", env=env, post_fn=post, sleep_fn=lambda s: None)
+    check("ask_full returns the text and the provider path",
+          r == {"text": "hi", "via": "groq/openai/gpt-oss-120b"})
+
+    check("the provider family is the first part of the path",
+          provider_family("google/gemini-3.1-flash-lite") == "google"
+          and provider_family("cloudflare/@cf/meta/llama") == "cloudflare"
+          and provider_family("") == "" and provider_family(None) == "")
+
+    post, st = scripted([err(429), ok("B", via="cloudflare/@cf/meta/llama-3.3")])
+    r = ask_chain("q", models=["a", "b"], env=env, post_fn=post, sleep_fn=lambda s: None)
+    check("the chain reports the provider and family of the model that answered",
+          r["provider"] == "cloudflare/@cf/meta/llama-3.3" and r["family"] == "cloudflare")
+
+    post, st = scripted([ok("D")])
+    r = ask_chain("q", env=env, post_fn=post, sleep_fn=lambda s: None)
+    check("a missing provider header gives an empty provider and family, not a crash",
+          r["provider"] == "" and r["family"] == "")
+
     print(str(sum(results)) + " / " + str(len(results)) + " passed")
 
 
 def run_live():
-    reply = ask("Reply with the single word OK.", system_prompt="You are a connection test. Follow the user instruction exactly.")
-    print("OK" if "OK" in reply.upper() else redact(reply))
+    res = ask_full("Reply with the single word OK.",
+                   system_prompt="You are a connection test. Follow the user instruction exactly.")
+    text = res["text"]
+    print(("OK" if "OK" in text.upper() else redact(text)) + "  via " + (res["via"] or "unknown"))
 
 
 if __name__ == "__main__":
