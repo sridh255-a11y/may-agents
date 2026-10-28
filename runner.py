@@ -141,6 +141,7 @@ def run_approved_plan(request_id, notes, writer_fn=None, checker_fn=None, gate_f
     request = str(payload.get("request", ""))
     project = row.get("project", "")
     done = set()
+    unbuilt = set()
     written = None
     verdict = None
     final = "done"
@@ -158,7 +159,8 @@ def run_approved_plan(request_id, notes, writer_fn=None, checker_fn=None, gate_f
             log_step(run_id, step, "skipped", "Only you approve. The Runner never approves.", db_path)
         elif stype not in BUILT or BUILT[stype] != step.get("agent"):
             log_step(run_id, step, "skipped", "Not built yet.", db_path)
-        elif any(d not in done for d in (step.get("depends_on") or [])):
+            unbuilt.add(sid)
+        elif any(d not in done and d not in unbuilt for d in (step.get("depends_on") or [])):
             log_step(run_id, step, "skipped", "A step it depends on did not finish.", db_path)
         elif stype == "write":
             try:
@@ -323,7 +325,7 @@ def run_tests():
             {"id": 3, "type": "check", "agent": "Checker", "title": "C", "input": "", "depends_on": [2], "available": True},
         ])
         out, g, db = go(row(p=dep))
-        check("dependency not done skips the check", out["steps"][2]["status"] == "skipped" and not g.calls)
+        check("unbuilt dependency does not block the check", out["steps"][2]["status"] == "done" and len(g.calls) == 1)
         db = fresh()
         rid = start_run(5, db)
         check("recover marks interrupted", recover(db) == 1 and _rows(db, "SELECT status FROM runs WHERE id = ?", (rid,))[0]["status"] == "interrupted")
