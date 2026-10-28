@@ -143,6 +143,7 @@
     t = String(t || "").trim().toUpperCase();
     if (t.indexOf("APPROVE") === 0) { return "APPROVE"; }
     if (t.indexOf("REJECT") === 0) { return "REJECT"; }
+    if (t.indexOf("PLAN") === 0) { return "PLAN"; }
     return "UNCLEAR";
   }
   function verdictBadge(v) {
@@ -271,9 +272,11 @@
     if (!req) { toast("Type a request first.", "warn"); $("request").focus(); return; }
     var notes = $("notes").value;
     if (!notes.trim()) { toast("No source notes. The Writer has nothing to use and will say NOT FOUND.", "warn"); }
-    var btn = $("send");
+    var btn = $("send"), btn2 = $("send-plan");
+    var mode = (ev.submitter && ev.submitter.id === "send-plan") ? "plan" : "run";
+    if (btn2) { btn2.disabled = true; }
     btn.disabled = true;
-    api("POST", "/api/submit", { project: state.project, request: req, notes: notes }).then(function (r) {
+    api("POST", "/api/submit", { project: state.project, request: req, notes: notes, mode: mode }).then(function (r) {
       toast("Task started.", "ok");
       $("request").value = "";
       followTask(r.task_id);
@@ -281,7 +284,7 @@
       $("result").scrollIntoView({ block: "nearest" });
     }).catch(function (e) {
       toast(e.message, "err");
-    }).finally(function () { btn.disabled = false; });
+    }).finally(function () { btn.disabled = false; if (btn2) { btn2.disabled = false; } });
   }
 
   function cancelTask() {
@@ -310,7 +313,7 @@
     };
     if (action === "reject") {
       confirmAsk("Reject this item?", "It will be marked rejected and leave the pending list.", "Reject", "Keep pending").then(function (y) { if (y) { go(); } });
-    } else if (v !== "APPROVE") {
+    } else if (v !== "APPROVE" && v !== "PLAN") {
       confirmAsk("Approve anyway?", "The Checker did not approve this item. Check the details before you approve.", "Approve anyway", "Cancel").then(function (y) { if (y) { go(); } });
     } else {
       go();
