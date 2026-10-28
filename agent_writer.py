@@ -10,6 +10,7 @@ WRITER_PROMPT = (
     "Do not add facts from memory. If the notes do not cover the topic, write NOT FOUND as the script. "
     "State each fact once. Never repeat a fact or a sentence. "
     "Keep the script short: about 25 words per fact in the notes, and never more than 120 words in total. "
+    "Use plain, neutral words. Never use promotional words such as versatile, seamlessly, revolutionary, amazing, innovative or ultimate unless the notes use them. "
     "List every factual claim with an exact quote copied from the notes. "
     'Reply with JSON only: {"title": "...", "script": "...", "claims": [{"claim": "...", "quote": "..."}]}'
 )
