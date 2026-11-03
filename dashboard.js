@@ -151,6 +151,40 @@
     return el("span", "verdict " + k.toLowerCase(), k === "UNCLEAR" ? "NO CLEAR VERDICT" : k);
   }
 
+  function seoBox(w) {
+    var box = el("div", "");
+    var out = el("div", "");
+    var btn = el("button", "btn secondary", "Make SEO");
+    btn.type = "button";
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      clear(out);
+      out.appendChild(el("p", "muted small", "Working. This can take a minute on free models."));
+      api("POST", "/api/seo", { project: state.project, script: w.script, title: w.title || "" }).then(function (r) {
+        var s = r.seo || {};
+        var c = s.checks || {};
+        clear(out);
+        out.appendChild(el("p", "kv", "SEO title (" + (c.title_len || 0) + " of 100)"));
+        out.appendChild(el("p", "", s.title || ""));
+        out.appendChild(el("p", "kv", "Description (" + (c.description_len || 0) + " of 5000)"));
+        out.appendChild(el("pre", "script", s.description || ""));
+        out.appendChild(el("p", "kv", "Tags (" + (c.tags_len || 0) + " of 500)"));
+        out.appendChild(el("p", "", (s.tags || []).join(", ")));
+        out.appendChild(el("p", "kv", "Hashtags"));
+        out.appendChild(el("p", "", (s.hashtags || []).join(" ")));
+        if (s.issues && s.issues.length) {
+          out.appendChild(el("p", "kv", "Issues"));
+          s.issues.forEach(function (i) { out.appendChild(el("div", "claim nf", i)); });
+        } else {
+          out.appendChild(el("p", "muted small", "SEO checks passed. Nothing is sent to YouTube."));
+        }
+      }).catch(function (e) { clear(out); toast(e.message, "err"); }).finally(function () { btn.disabled = false; });
+    });
+    box.appendChild(btn);
+    box.appendChild(out);
+    return box;
+  }
+
   function writerNode(w) {
     var f = el("div", "");
     if (!w || typeof w !== "object") { return f; }
@@ -166,6 +200,7 @@
         f.appendChild(box);
       });
     }
+    if (Array.isArray(w.claims) && typeof w.script === "string" && w.script.trim()) { f.appendChild(seoBox(w)); }
     return f;
   }
 
