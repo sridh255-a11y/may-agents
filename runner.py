@@ -89,9 +89,17 @@ def recover(db_path=None):
     return _exec(db_path, "UPDATE runs SET status = 'interrupted', finished_at = ? WHERE status IN ('running', 'cancel_requested')", (_now(),))[1]
 
 
-def _real_writer(topic, notes):
+def _real_writer(topic, notes, style=None):
     import agent_writer
-    return agent_writer.write(topic, notes)
+    return agent_writer.write(topic, notes, style=style)
+
+
+def _real_style(project, db_path=None):
+    try:
+        import channel_settings
+        return channel_settings.style_text(project, db_path)
+    except Exception:
+        return ""
 
 
 def _real_checker(writer_result, notes):
@@ -104,11 +112,12 @@ def _real_gate(project, request_type, payload):
     return approval_gate.add_request(project, request_type, payload)
 
 
-def run_approved_plan(request_id, notes, writer_fn=None, checker_fn=None, gate_fn=None, load_fn=None, db_path=None):
+def run_approved_plan(request_id, notes, writer_fn=None, checker_fn=None, gate_fn=None, load_fn=None, db_path=None, style_fn=None):
     writer_fn = writer_fn or _real_writer
     checker_fn = checker_fn or _real_checker
     gate_fn = gate_fn or _real_gate
     load_fn = load_fn or load_request
+    style_fn = style_fn or _real_style
     out = {"ok": False, "request_id": request_id, "run_id": None, "status": "refused", "message": "", "gate_id": None, "steps": []}
     if not str(notes or "").strip():
         out["message"] = "No source notes. Nothing was run."
@@ -164,7 +173,8 @@ def run_approved_plan(request_id, notes, writer_fn=None, checker_fn=None, gate_f
             log_step(run_id, step, "skipped", "A step it depends on did not finish.", db_path)
         elif stype == "write":
             try:
-                written = writer_fn(request, notes)
+                style = style_fn(project, db_path)
+                written = writer_fn(request, notes, style=style) if style else writer_fn(request, notes)
             except Exception as e:
                 written = {"error": redact(type(e).__name__ + ": " + str(e))}
             if not isinstance(written, dict) or "error" in written:
