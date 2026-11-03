@@ -6,9 +6,17 @@ def _real_manager(request):
     return agent_manager.route(request)
 
 
-def _real_writer(topic, notes):
+def _real_writer(topic, notes, style=None):
     import agent_writer
-    return agent_writer.write(topic, notes)
+    return agent_writer.write(topic, notes, style=style)
+
+
+def _real_style(project):
+    try:
+        import channel_settings
+        return channel_settings.style_text(project)
+    except Exception:
+        return ""
 
 
 def _real_checker(writer_result, notes):
@@ -40,9 +48,11 @@ def family_of(item):
     return ""
 
 
-def run_request(project, request, notes, manager_fn=None, writer_fn=None, checker_fn=None, gate_fn=None):
+def run_request(project, request, notes, manager_fn=None, writer_fn=None, checker_fn=None, gate_fn=None, style_fn=None):
     manager_fn = manager_fn or _real_manager
+    use_style = writer_fn is None or style_fn is not None
     writer_fn = writer_fn or _real_writer
+    style_fn = style_fn or _real_style
     checker_fn = checker_fn or _real_checker
     gate_fn = gate_fn or _real_gate
     out = {
@@ -71,7 +81,8 @@ def run_request(project, request, notes, manager_fn=None, writer_fn=None, checke
             else:
                 out["message"] = "The Manager could not route this request."
             return out
-        written = writer_fn(request, notes)
+        style = style_fn(project) if use_style else ""
+        written = writer_fn(request, notes, style=style) if style else writer_fn(request, notes)
         out["writer_result"] = written
         if not isinstance(written, dict):
             out["error"] = "Writer failed: bad result"
