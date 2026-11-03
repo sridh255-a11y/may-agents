@@ -79,6 +79,12 @@ def _real_channel_set(project, settings):
     return channel_settings.set_channel(project, settings)
 
 
+def _real_seo(project, script, title):
+    import agent_seo
+    import channel_settings
+    return agent_seo.seo_pack(script, title=title, style=channel_settings.style_text(project))
+
+
 def _to_int(value):
     try:
         return int(value)
@@ -87,11 +93,12 @@ def _to_int(value):
 
 
 class DashboardApi:
-    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None):
+    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None, seo_fn=None):
         self.run_fn = run_fn or _real_run; self.plan_fn = plan_fn or _real_plan
         self.add_fn = add_fn or _real_add
         self.channel_get_fn = channel_get_fn or _real_channel_get
         self.channel_set_fn = channel_set_fn or _real_channel_set
+        self.seo_fn = seo_fn or _real_seo
         self.list_fn = list_fn or _real_list
         self.approve_fn = approve_fn or _real_approve
         self.reject_fn = reject_fn or _real_reject
@@ -242,6 +249,21 @@ class DashboardApi:
         self.reject_fn(req_id)
         return 200, {"ok": True, "status": "rejected", "id": req_id}
 
+    def seo(self, data):
+        project = data.get("project")
+        script = data.get("script")
+        title = data.get("title", "")
+        if project not in PROJECTS:
+            return 400, {"error": "Unknown project"}
+        if not isinstance(script, str) or not script.strip():
+            return 400, {"error": "Script is empty"}
+        if len(script) > MAX_NOTES_CHARS or not isinstance(title, str) or len(title) > 300:
+            return 400, {"error": "Script or title is invalid or too long"}
+        res = self.seo_fn(project, script, title)
+        if not isinstance(res, dict) or "error" in res:
+            return 502, {"error": str((res or {}).get("error", "SEO failed")) if isinstance(res, dict) else "SEO failed"}
+        return 200, {"project": project, "seo": res}
+
     def channel_get(self, data):
         project = data.get("project")
         if project not in PROJECTS:
@@ -286,6 +308,8 @@ class DashboardApi:
                     return self.decide(data, "reject")
                 if path == "/api/channel":
                     return self.channel_set(data)
+                if path == "/api/seo":
+                    return self.seo(data)
         except Exception as e:
             return 500, {"error": "Server error: " + type(e).__name__}
         return 404, {"error": "Not found"}
