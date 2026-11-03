@@ -19,8 +19,8 @@
   <p class="label">Projects</p>
   <nav id="projects" class="projects" aria-label="Projects">
     <button type="button" class="proj" data-project="YouTube RankPeak"><i class="ico c-red"><svg viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg></i><span>YouTube &mdash; RankPeak</span></button>
-    <button type="button" class="proj" data-project="YouTube Brand Stories"><i class="ico c-violet"><svg viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg></i><span>YouTube &mdash; Brand Stories</span></button>
-    <button type="button" class="proj" data-project="YouTube Channel 3"><i class="ico c-teal"><svg viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg></i><span>YouTube &mdash; Channel 3</span></button>
+    <button type="button" class="proj" data-project="The Inside Story"><i class="ico c-violet"><svg viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg></i><span>YouTube &mdash; The Inside Story</span></button>
+    <button type="button" class="proj" data-project="Modern Leverage AI"><i class="ico c-teal"><svg viewBox="0 0 24 24"><path class="fill" d="M8 5v14l11-7z"/></svg></i><span>YouTube &mdash; Modern Leverage AI</span></button>
     <button type="button" class="proj" data-project="AI Resume Website"><i class="ico c-blue"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M3 13h18"/></svg></i><span>AI Resume Website</span></button>
     <button type="button" class="proj" data-project="Money-Making App"><i class="ico c-green"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-6"/></svg></i><span>Money-Making App</span></button>
     <button type="button" class="proj" data-project="Affiliate Marketing"><i class="ico c-violet"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></i><span>Affiliate Marketing</span></button>
@@ -107,6 +107,30 @@
     <div class="card-head"><h2>Result</h2><span id="result-status" class="badge"></span></div>
     <div id="result-body"></div>
     <div class="row"><button type="button" id="cancel-task" class="btn secondary" hidden>Cancel task</button></div>
+  </section>
+
+  <section id="ch-card" class="card">
+    <div class="card-head"><h2>Channel style</h2><span id="ch-status" class="muted small"></span></div>
+    <p class="muted small">Every agent reads this for the selected project. It sets tone and look only, never facts.</p>
+    <form id="ch-form" autocomplete="off">
+      <label class="muted small" for="ch-tone">Tone</label>
+      <input type="text" id="ch-tone" maxlength="300" placeholder="e.g. calm, confident, no hype">
+      <label class="muted small" for="ch-style">Style</label>
+      <input type="text" id="ch-style" maxlength="300" placeholder="e.g. dark premium, fast cuts">
+      <label class="muted small" for="ch-audience">Audience</label>
+      <input type="text" id="ch-audience" maxlength="300" placeholder="e.g. creators in India, 18 to 30">
+      <label class="muted small" for="ch-language">Language</label>
+      <input type="text" id="ch-language" maxlength="60" placeholder="e.g. English or Telugu">
+      <label class="muted small" for="ch-caption_style">Caption style</label>
+      <input type="text" id="ch-caption_style" maxlength="300" placeholder="e.g. word by word, bold white">
+      <label class="muted small" for="ch-colors">Colors</label>
+      <input type="text" id="ch-colors" maxlength="200" placeholder="e.g. navy and orange">
+      <label class="muted small" for="ch-rules">Rules</label>
+      <input type="text" id="ch-rules" maxlength="600" placeholder="e.g. no promo words, max 60 seconds">
+      <label class="muted small" for="ch-topics">Topics (one per line)</label>
+      <textarea id="ch-topics" rows="4"></textarea>
+      <div class="row"><button type="submit" id="ch-save" class="btn secondary">Save style</button></div>
+    </form>
   </section>
 
   <section class="cards">

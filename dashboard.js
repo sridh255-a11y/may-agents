@@ -463,6 +463,36 @@
     ]).then(function () { state.checked = true; renderAll(); });
   }
 
+  var CH_FIELDS = ["tone", "style", "audience", "language", "caption_style", "colors", "rules"];
+
+  function loadChannel(name) {
+    if (!$("ch-card")) { return; }
+    api("GET", "/api/channel?project=" + encodeURIComponent(name)).then(function (r) {
+      if (state.project !== name) { return; }
+      var s = r.settings || {};
+      CH_FIELDS.forEach(function (k) { $("ch-" + k).value = s[k] || ""; });
+      $("ch-topics").value = (s.topics || []).join("\n");
+      $("ch-status").textContent = "";
+    }).catch(function (e) { $("ch-status").textContent = "Could not load: " + e.message; });
+  }
+
+  function saveChannel(ev) {
+    ev.preventDefault();
+    var data = {};
+    CH_FIELDS.forEach(function (k) { data[k] = $("ch-" + k).value; });
+    data.topics = $("ch-topics").value.split("\n");
+    var btn = $("ch-save");
+    btn.disabled = true;
+    api("POST", "/api/channel", { project: state.project, settings: data }).then(function () {
+      toast("Channel style saved for " + state.project + ".", "ok");
+      loadChannel(state.project);
+    }).catch(function (e) { toast(e.message, "err"); }).finally(function () { btn.disabled = false; });
+  }
+
+  document.addEventListener("submit", function (ev) {
+    if (ev.target && ev.target.id === "ch-form") { saveChannel(ev); }
+  });
+
   function selectProject(name) {
     state.project = name;
     document.querySelectorAll(".proj").forEach(function (b) {
@@ -478,6 +508,7 @@
     renderApprovals();
     if (state.currentTask && state.currentTask.project === name) { renderResult(state.currentTask); }
     else { $("result").hidden = true; }
+    loadChannel(name);
     if (!reduced() && $("agents").animate) {
       var kf = [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }];
       $("agents").animate(kf, { duration: 200 });
