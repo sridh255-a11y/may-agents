@@ -69,6 +69,16 @@ def _real_link():
         return resp.status == 200
 
 
+def _real_channel_get(project):
+    import channel_settings
+    return channel_settings.get_channel(project)
+
+
+def _real_channel_set(project, settings):
+    import channel_settings
+    return channel_settings.set_channel(project, settings)
+
+
 def _to_int(value):
     try:
         return int(value)
@@ -77,9 +87,11 @@ def _to_int(value):
 
 
 class DashboardApi:
-    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None):
+    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None):
         self.run_fn = run_fn or _real_run; self.plan_fn = plan_fn or _real_plan
         self.add_fn = add_fn or _real_add
+        self.channel_get_fn = channel_get_fn or _real_channel_get
+        self.channel_set_fn = channel_set_fn or _real_channel_set
         self.list_fn = list_fn or _real_list
         self.approve_fn = approve_fn or _real_approve
         self.reject_fn = reject_fn or _real_reject
@@ -230,6 +242,25 @@ class DashboardApi:
         self.reject_fn(req_id)
         return 200, {"ok": True, "status": "rejected", "id": req_id}
 
+    def channel_get(self, data):
+        project = data.get("project")
+        if project not in PROJECTS:
+            return 400, {"error": "Unknown project"}
+        return 200, {"project": project, "settings": self.channel_get_fn(project)}
+
+    def channel_set(self, data):
+        project = data.get("project")
+        settings = data.get("settings")
+        if project not in PROJECTS:
+            return 400, {"error": "Unknown project"}
+        if not isinstance(settings, dict):
+            return 400, {"error": "Settings must be an object"}
+        try:
+            saved = self.channel_set_fn(project, settings)
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        return 200, {"ok": True, "project": project, "settings": saved}
+
     def handle(self, method, path, data=None):
         data = data if isinstance(data, dict) else {}
         try:
@@ -242,6 +273,8 @@ class DashboardApi:
                     return 200, {"tasks": self.tasks_list()}
                 if path == "/api/task":
                     return self.task_get(data)
+                if path == "/api/channel":
+                    return self.channel_get(data)
             if method == "POST":
                 if path == "/api/submit":
                     return self.submit(data)
@@ -251,6 +284,8 @@ class DashboardApi:
                     return self.decide(data, "approve")
                 if path == "/api/reject":
                     return self.decide(data, "reject")
+                if path == "/api/channel":
+                    return self.channel_set(data)
         except Exception as e:
             return 500, {"error": "Server error: " + type(e).__name__}
         return 404, {"error": "Not found"}
