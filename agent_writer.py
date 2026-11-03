@@ -37,10 +37,12 @@ def repeated_phrases(text, n=5):
     return repeats
 
 
-def write(topic, notes, chain_fn=None, models=None):
+def write(topic, notes, chain_fn=None, models=None, style=None):
     chain_fn = chain_fn or ask_chain
     models = models or writer_models()
     prompt = "TOPIC: " + topic + "\n\nSOURCE NOTES:\n" + notes
+    if style and str(style).strip():
+        prompt += "\n\nCHANNEL STYLE (tone and look only, never a source of facts):\n" + str(style).strip()
     try:
         res = chain_fn(prompt, system_prompt=WRITER_PROMPT, models=models, max_calls=MAX_MODEL_CALLS)
     except ModelError as e:
