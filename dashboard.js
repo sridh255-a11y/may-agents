@@ -151,6 +151,60 @@
     return el("span", "verdict " + k.toLowerCase(), k === "UNCLEAR" ? "NO CLEAR VERDICT" : k);
   }
 
+  function brRun(ev) {
+    ev.preventDefault();
+    var out = $("br-out"), btn = $("br-go");
+    btn.disabled = true;
+    clear(out);
+    out.appendChild(el("p", "muted small", "Researching YouTube and planning. This can take a minute on free models."));
+    api("POST", "/api/brief", { project: state.project, region: $("br-region").value.trim(), days: parseInt($("br-days").value, 10), length: $("br-length").value }).then(function (r) {
+      var b = r.brief || {};
+      clear(out);
+      if (b.message) { out.appendChild(el("p", "muted small", b.message)); }
+      out.appendChild(el("p", "kv", "Topics ranked"));
+      (b.ranked || []).forEach(function (t, i) {
+        out.appendChild(el("p", "", (i + 1) + ". " + t.topic + " (score " + t.score + ")"));
+      });
+      if (b.errors && b.errors.length) { b.errors.forEach(function (e) { out.appendChild(el("p", "muted small", "Skipped: " + e)); }); }
+      if (!b.pick) { return; }
+      out.appendChild(el("p", "kv", "Best topic: " + b.pick.topic));
+      (b.pick.videos || []).slice(0, 5).forEach(function (v, i) {
+        var box = el("div", "claim");
+        var a = document.createElement("a");
+        a.href = "https://www.youtube.com/watch?v=" + encodeURIComponent(v.id || "");
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = (i + 1) + ". " + v.title;
+        box.appendChild(a);
+        box.appendChild(el("small", "", " " + v.views + " views | " + fmtDur(v.seconds) + " | uploaded " + v.uploaded + " | subs " + v.subs));
+        out.appendChild(box);
+      });
+      var o = b.outline || {};
+      if (o.error) { out.appendChild(el("p", "error", "Outline failed: " + o.error)); return; }
+      out.appendChild(el("p", "kv", "Angle"));
+      out.appendChild(el("p", "", o.angle || ""));
+      out.appendChild(el("p", "kv", "Hook"));
+      out.appendChild(el("p", "", o.hook || ""));
+      out.appendChild(el("p", "kv", "Title options"));
+      (o.titles || []).forEach(function (t) { out.appendChild(el("p", "", t)); });
+      out.appendChild(el("p", "kv", "Outline"));
+      (o.outline || []).forEach(function (s) {
+        var need = String(s.purpose || "").indexOf("FACT NEEDED") >= 0;
+        out.appendChild(el("div", "claim" + (need ? " nf" : ""), s.section + " - " + s.purpose));
+      });
+      if (o.issues && o.issues.length) {
+        out.appendChild(el("p", "kv", "Issues"));
+        o.issues.forEach(function (i) { out.appendChild(el("div", "claim nf", i)); });
+      } else {
+        out.appendChild(el("p", "muted small", "Checks passed. FACT NEEDED lines are for you to fill from a source you trust. Nothing is published or sent."));
+      }
+    }).catch(function (e) { clear(out); toast(e.message, "err"); }).finally(function () { btn.disabled = false; });
+  }
+
+  document.addEventListener("submit", function (ev) {
+    if (ev.target && ev.target.id === "br-form") { brRun(ev); }
+  });
+
   function fmtDur(s) {
     if (typeof s !== "number") { return "length ?"; }
     var m = Math.floor(s / 60), r = s % 60;

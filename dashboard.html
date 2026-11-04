@@ -109,6 +109,21 @@
     <div class="row"><button type="button" id="cancel-task" class="btn secondary" hidden>Cancel task</button></div>
   </section>
 
+  <section id="br-card" class="card">
+    <div class="card-head"><h2>Plan next video</h2><span id="br-status" class="muted small"></span></div>
+    <p class="muted small">MAY searches this channel's seed topics on YouTube, picks the best trending topic and plans an outline. About 300 free quota units per run, so use it a few times a day at most.</p>
+    <form id="br-form" autocomplete="off">
+      <label class="muted small" for="br-region">Region (2 letters, optional)</label>
+      <input type="text" id="br-region" maxlength="2" value="US">
+      <label class="muted small" for="br-days">Period</label>
+      <select id="br-days"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 365 days</option></select>
+      <label class="muted small" for="br-length">Video length</label>
+      <select id="br-length"><option value="8-15" selected>8 to 15 min</option><option value="15+">15 min or longer</option><option value="2-5">2 to 5 min</option><option value="any">Any length</option></select>
+      <div class="row"><button type="submit" id="br-go" class="btn primary">Plan next video</button></div>
+    </form>
+    <div id="br-out"></div>
+  </section>
+
   <section id="tr-card" class="card">
     <div class="card-head"><h2>Find trends</h2><span id="tr-status" class="muted small"></span></div>
     <p class="muted small">Public YouTube data. It shows what is working now, and it cannot predict a viral hit.</p>
