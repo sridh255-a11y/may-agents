@@ -19,14 +19,22 @@ OUTLINE_PROMPT = (
     "Use only the titles and numbers in the DATA. State no facts about the world, no product details, no prices and no event dates. "
     "Where a section needs a real fact, write 'FACT NEEDED:' and say what to look up. "
     "Use plain, neutral words, with no promotional words. Never write a number that is not in the DATA. "
+    "Never promise results, savings or outcomes in the hook or titles, and never copy a claim from a video title. "
     "Give an angle (what the top videos miss), a hook line, 3 to 5 title options of at most 70 characters, and 4 to 6 outline sections. "
     'Reply with JSON only: {"angle": "...", "hook": "...", "titles": ["..."], "outline": [{"section": "...", "purpose": "..."}]}'
 )
 
 
+def is_english(title):
+    letters = [c for c in str(title) if c.isalpha()]
+    if not letters:
+        return False
+    return sum(1 for c in letters if ord(c) < 0x250) / len(letters) >= 0.9
+
+
 def usable(v):
     views, subs = v.get("views"), v.get("subs")
-    return isinstance(views, int) and isinstance(subs, int) and views >= MIN_VIEWS and MIN_SUBS <= subs <= MAX_SUBS
+    return is_english(v.get("title", "")) and isinstance(views, int) and isinstance(subs, int) and views >= MIN_VIEWS and MIN_SUBS <= subs <= MAX_SUBS
 
 
 def score(v):
