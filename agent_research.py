@@ -29,6 +29,15 @@ def _int(v):
         return None
 
 
+def _seconds(iso):
+    import re
+    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?", str(iso or ""))
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, s = (int(x or 0) for x in m.groups())
+    return d * 86400 + h * 3600 + mi * 60 + s
+
+
 def _age_days(published, now):
     try:
         dt = datetime.fromisoformat(str(published).replace("Z", "+00:00"))
@@ -60,7 +69,7 @@ def analyze(items, now):
         outlier = round(views / subs, 2) if subs and subs > 0 else None
         rows.append({
             "id": it.get("id"), "title": it.get("title", ""), "channel": it.get("channel", ""),
-            "views": views, "subs": subs, "uploaded": str(it.get("published", ""))[:10], "age_days": round(age, 1), "speed": round(views / age),
+            "views": views, "subs": subs, "uploaded": str(it.get("published", ""))[:10], "age_days": round(age, 1), "seconds": it.get("seconds"), "speed": round(views / age),
             "outlier": outlier,
             "small_win": bool(subs is not None and 0 < subs < 100000 and views >= 10 * subs),
         })
@@ -68,7 +77,7 @@ def analyze(items, now):
     return rows
 
 
-def trend_report(topic, region="", days=30, fetch_fn=None, now=None):
+def trend_report(topic, region="", days=30, fetch_fn=None, now=None, min_sec=None, max_sec=None):
     if not isinstance(topic, str) or not topic.strip():
         return {"error": "Topic is empty."}
     topic = topic.strip()
@@ -79,21 +88,26 @@ def trend_report(topic, region="", days=30, fetch_fn=None, now=None):
         return {"error": "Region must be 2 letters, like US or IN."}
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 365:
         return {"error": "Days must be 1 to 365."}
+    for lim in (min_sec, max_sec):
+        if lim is not None and (not isinstance(lim, int) or isinstance(lim, bool) or lim < 0):
+            return {"error": "Length limits must be whole seconds."}
     fetch_fn = fetch_fn or _real_fetch
     now = now or datetime.now(timezone.utc)
     base = {"topic": topic, "region": region, "days": days}
     try:
-        params = {"part": "snippet", "q": topic, "type": "video", "order": "viewCount", "maxResults": 25,
+        params = {"part": "snippet", "q": topic, "type": "video", "order": "viewCount", "maxResults": 50,
                   "publishedAfter": (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")}
         if region:
             params["regionCode"] = region
+        if min_sec is not None and max_sec is not None and min_sec >= 240 and max_sec <= 1200:
+            params["videoDuration"] = "medium"
         found = fetch_fn("search", params)
         ids = [i.get("id", {}).get("videoId") for i in found.get("items", []) if isinstance(i, dict)]
         ids = [i for i in ids if i]
         if not ids:
             return dict(base, videos=[], summary={"videos_analyzed": 0}, patterns={},
                         message="No videos found for this topic in that period.")
-        vids = fetch_fn("videos", {"part": "snippet,statistics", "id": ",".join(ids)})
+        vids = fetch_fn("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(ids)})
         vitems = [v for v in vids.get("items", []) if isinstance(v, dict)]
         cids = sorted({v.get("snippet", {}).get("channelId") for v in vitems if v.get("snippet", {}).get("channelId")})
         subs = {}
@@ -110,8 +124,11 @@ def trend_report(topic, region="", days=30, fetch_fn=None, now=None):
         st = v.get("statistics", {})
         items.append({"id": v.get("id"), "title": str(sn.get("title", "")), "channel": str(sn.get("channelTitle", "")),
                       "published": sn.get("publishedAt"), "views": _int(st.get("viewCount")),
-                      "subs": subs.get(sn.get("channelId"))})
+                      "subs": subs.get(sn.get("channelId")),
+                      "seconds": _seconds(v.get("contentDetails", {}).get("duration"))})
     rows = analyze(items, now)
+    if min_sec is not None or max_sec is not None:
+        rows = [r for r in rows if r.get("seconds") is not None and (min_sec is None or r["seconds"] >= min_sec) and (max_sec is None or r["seconds"] <= max_sec)]
     views = [r["views"] for r in rows]
     summary = {
         "videos_analyzed": len(rows),

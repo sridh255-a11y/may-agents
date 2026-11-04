@@ -151,6 +151,12 @@
     return el("span", "verdict " + k.toLowerCase(), k === "UNCLEAR" ? "NO CLEAR VERDICT" : k);
   }
 
+  function fmtDur(s) {
+    if (typeof s !== "number") { return "length ?"; }
+    var m = Math.floor(s / 60), r = s % 60;
+    return m + ":" + (r < 10 ? "0" : "") + r;
+  }
+
   function trendsRun(ev) {
     ev.preventDefault();
     var topic = $("tr-topic").value.trim();
@@ -159,7 +165,7 @@
     btn.disabled = true;
     clear(out);
     out.appendChild(el("p", "muted small", "Searching YouTube. This can take a few seconds."));
-    api("POST", "/api/trends", { project: state.project, topic: topic, region: $("tr-region").value.trim(), days: parseInt($("tr-days").value, 10) }).then(function (r) {
+    api("POST", "/api/trends", { project: state.project, topic: topic, region: $("tr-region").value.trim(), days: parseInt($("tr-days").value, 10), length: $("tr-length").value }).then(function (r) {
       var t = r.trends || {};
       var s = t.summary || {};
       clear(out);
@@ -176,7 +182,7 @@
         a.rel = "noopener noreferrer";
         a.textContent = (i + 1) + ". " + v.title;
         box.appendChild(a);
-        box.appendChild(el("small", "", " " + v.views + " views | uploaded " + v.uploaded + " | subs " + v.subs + " | " + v.speed + "/day | outlier " + v.outlier + (v.small_win ? " | SMALL WIN" : "")));
+        box.appendChild(el("small", "", " " + v.views + " views | " + fmtDur(v.seconds) + " | uploaded " + v.uploaded + " | subs " + v.subs + " | " + v.speed + "/day | outlier " + v.outlier + (v.small_win ? " | SMALL WIN" : "")));
         out.appendChild(box);
       });
     }).catch(function (e) { clear(out); toast(e.message, "err"); }).finally(function () { btn.disabled = false; });

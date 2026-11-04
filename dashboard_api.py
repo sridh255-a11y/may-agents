@@ -85,9 +85,9 @@ def _real_seo(project, script, title):
     return agent_seo.seo_pack(script, title=title, style=channel_settings.style_text(project))
 
 
-def _real_trends(topic, region, days):
+def _real_trends(topic, region, days, min_sec=None, max_sec=None):
     import agent_research
-    return agent_research.trend_report(topic, region=region, days=days)
+    return agent_research.trend_report(topic, region=region, days=days, min_sec=min_sec, max_sec=max_sec)
 
 
 MAX_TRENDS_PER_RUN = 20
@@ -285,11 +285,15 @@ class DashboardApi:
             return 400, {"error": "Topic is empty or too long"}
         if not isinstance(region, str) or not isinstance(days, int) or isinstance(days, bool):
             return 400, {"error": "Region or days is invalid"}
+        length = data.get("length", "any")
+        rng = {"any": (None, None), "2-5": (120, 300), "8-15": (480, 900), "15+": (900, None)}.get(length) if isinstance(length, str) else None
+        if rng is None:
+            return 400, {"error": "Length is invalid"}
         with self.lock:
             if self.trend_calls >= MAX_TRENDS_PER_RUN:
                 return 429, {"error": "Trend search limit reached for this session. Restart the dashboard to reset."}
             self.trend_calls += 1
-        res = self.trends_fn(topic, region, days)
+        res = self.trends_fn(topic, region, days, rng[0], rng[1])
         if not isinstance(res, dict) or "error" in res:
             return 502, {"error": str(res.get("error", "Trend search failed")) if isinstance(res, dict) else "Trend search failed"}
         return 200, {"project": project, "trends": res}
