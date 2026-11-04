@@ -91,6 +91,12 @@ def _real_trends(topic, region, days, min_sec=None, max_sec=None):
 
 
 MAX_TRENDS_PER_RUN = 20
+MAX_BRIEFS_PER_RUN = 5
+
+
+def _real_brief(project, region, days, length):
+    import agent_trendbrief
+    return agent_trendbrief.brief_with_outline(project, region=region, days=days, length=length)
 
 
 def _to_int(value):
@@ -101,7 +107,7 @@ def _to_int(value):
 
 
 class DashboardApi:
-    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None, seo_fn=None, trends_fn=None):
+    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None, seo_fn=None, trends_fn=None, brief_fn=None):
         self.run_fn = run_fn or _real_run; self.plan_fn = plan_fn or _real_plan
         self.add_fn = add_fn or _real_add
         self.channel_get_fn = channel_get_fn or _real_channel_get
@@ -109,6 +115,8 @@ class DashboardApi:
         self.seo_fn = seo_fn or _real_seo
         self.trends_fn = trends_fn or _real_trends
         self.trend_calls = 0
+        self.brief_fn = brief_fn or _real_brief
+        self.brief_calls = 0
         self.list_fn = list_fn or _real_list
         self.approve_fn = approve_fn or _real_approve
         self.reject_fn = reject_fn or _real_reject
@@ -298,6 +306,28 @@ class DashboardApi:
             return 502, {"error": str(res.get("error", "Trend search failed")) if isinstance(res, dict) else "Trend search failed"}
         return 200, {"project": project, "trends": res}
 
+    def brief(self, data):
+        project = data.get("project")
+        region = data.get("region", "")
+        days = data.get("days", 30)
+        length = data.get("length", "8-15")
+        if project not in PROJECTS:
+            return 400, {"error": "Unknown project"}
+        if not isinstance(region, str) or len(region) > 2:
+            return 400, {"error": "Region is invalid"}
+        if days not in (30, 90, 365) or isinstance(days, bool):
+            return 400, {"error": "Days is invalid"}
+        if length not in ("any", "2-5", "8-15", "15+"):
+            return 400, {"error": "Length is invalid"}
+        with self.lock:
+            if self.brief_calls >= MAX_BRIEFS_PER_RUN:
+                return 429, {"error": "Brief limit reached for this session. Restart the dashboard to reset."}
+            self.brief_calls += 1
+        res = self.brief_fn(project, region, days, length)
+        if not isinstance(res, dict) or "error" in res:
+            return 502, {"error": str(res.get("error", "Brief failed")) if isinstance(res, dict) else "Brief failed"}
+        return 200, {"project": project, "brief": res}
+
     def channel_get(self, data):
         project = data.get("project")
         if project not in PROJECTS:
@@ -346,6 +376,8 @@ class DashboardApi:
                     return self.seo(data)
                 if path == "/api/trends":
                     return self.trends(data)
+                if path == "/api/brief":
+                    return self.brief(data)
         except Exception as e:
             return 500, {"error": "Server error: " + type(e).__name__}
         return 404, {"error": "Not found"}
