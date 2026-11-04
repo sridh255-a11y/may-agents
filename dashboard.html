@@ -109,6 +109,21 @@
     <div class="row"><button type="button" id="cancel-task" class="btn secondary" hidden>Cancel task</button></div>
   </section>
 
+  <section id="tr-card" class="card">
+    <div class="card-head"><h2>Find trends</h2><span id="tr-status" class="muted small"></span></div>
+    <p class="muted small">Public YouTube data. It shows what is working now, and it cannot predict a viral hit.</p>
+    <form id="tr-form" autocomplete="off">
+      <label class="muted small" for="tr-topic">Topic</label>
+      <input type="text" id="tr-topic" maxlength="100" placeholder="e.g. AI tools for small business">
+      <label class="muted small" for="tr-region">Region (2 letters, optional)</label>
+      <input type="text" id="tr-region" maxlength="2" placeholder="US or IN">
+      <label class="muted small" for="tr-days">Period</label>
+      <select id="tr-days"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 365 days</option></select>
+      <div class="row"><button type="submit" id="tr-go" class="btn secondary">Find trends</button></div>
+    </form>
+    <div id="tr-out"></div>
+  </section>
+
   <section id="ch-card" class="card">
     <div class="card-head"><h2>Channel style</h2><span id="ch-status" class="muted small"></span></div>
     <p class="muted small">Every agent reads this for the selected project. It sets tone and look only, never facts.</p>
