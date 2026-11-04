@@ -60,7 +60,7 @@ def analyze(items, now):
         outlier = round(views / subs, 2) if subs and subs > 0 else None
         rows.append({
             "id": it.get("id"), "title": it.get("title", ""), "channel": it.get("channel", ""),
-            "views": views, "subs": subs, "age_days": round(age, 1), "speed": round(views / age),
+            "views": views, "subs": subs, "uploaded": str(it.get("published", ""))[:10], "age_days": round(age, 1), "speed": round(views / age),
             "outlier": outlier,
             "small_win": bool(subs is not None and 0 < subs < 100000 and views >= 10 * subs),
         })
@@ -156,6 +156,7 @@ def run_tests():
     check("outlier value", len(v) == 3 and v[0]["outlier"] == 25.0)
     check("hidden subs gives no outlier or win", len(v) == 3 and v[2]["outlier"] is None and v[2]["small_win"] is False)
     check("age is at least one day", len(v) == 3 and v[2]["speed"] == 1000)
+    check("upload date kept", len(v) == 3 and v[0]["uploaded"] == "2026-10-30" and v[1]["uploaded"] == "2026-10-01")
     check("summary", r.get("summary") == {"videos_analyzed": 3, "median_views": 50000, "over_100k": 1, "small_channel_wins": 1})
     check("title patterns", r.get("patterns", {}).get("avg_length") == 16 and r["patterns"]["with_number_pct"] == 33)
     check("region and date sent", calls[0][1].get("regionCode") == "US" and calls[0][1].get("publishedAfter") == "2026-10-04T00:00:00Z")
@@ -185,7 +186,7 @@ if __name__ == "__main__":
         else:
             print(res.get("message", "") or str(res["summary"]))
             for i, x in enumerate(res["videos"][:5], 1):
-                print(str(i) + ". " + x["title"][:60] + " | " + str(x["views"]) + " views | subs " + str(x["subs"])
+                print(str(i) + ". " + x["title"][:60] + " | " + str(x["views"]) + " views | uploaded " + str(x["uploaded"]) + " (" + str(round(x["age_days"])) + "d ago) | subs " + str(x["subs"])
                       + " | " + str(x["speed"]) + "/day | outlier " + str(x["outlier"]) + (" | SMALL WIN" if x["small_win"] else ""))
     else:
         sys.exit(0 if run_tests() else 1)
