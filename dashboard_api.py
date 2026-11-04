@@ -85,6 +85,14 @@ def _real_seo(project, script, title):
     return agent_seo.seo_pack(script, title=title, style=channel_settings.style_text(project))
 
 
+def _real_trends(topic, region, days):
+    import agent_research
+    return agent_research.trend_report(topic, region=region, days=days)
+
+
+MAX_TRENDS_PER_RUN = 20
+
+
 def _to_int(value):
     try:
         return int(value)
@@ -93,12 +101,14 @@ def _to_int(value):
 
 
 class DashboardApi:
-    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None, seo_fn=None):
+    def __init__(self, run_fn=None, add_fn=None, list_fn=None, approve_fn=None, reject_fn=None, link_fn=None, background=True, plan_fn=None, channel_get_fn=None, channel_set_fn=None, seo_fn=None, trends_fn=None):
         self.run_fn = run_fn or _real_run; self.plan_fn = plan_fn or _real_plan
         self.add_fn = add_fn or _real_add
         self.channel_get_fn = channel_get_fn or _real_channel_get
         self.channel_set_fn = channel_set_fn or _real_channel_set
         self.seo_fn = seo_fn or _real_seo
+        self.trends_fn = trends_fn or _real_trends
+        self.trend_calls = 0
         self.list_fn = list_fn or _real_list
         self.approve_fn = approve_fn or _real_approve
         self.reject_fn = reject_fn or _real_reject
@@ -264,6 +274,26 @@ class DashboardApi:
             return 502, {"error": str((res or {}).get("error", "SEO failed")) if isinstance(res, dict) else "SEO failed"}
         return 200, {"project": project, "seo": res}
 
+    def trends(self, data):
+        project = data.get("project")
+        topic = data.get("topic")
+        region = data.get("region", "")
+        days = data.get("days", 30)
+        if project not in PROJECTS:
+            return 400, {"error": "Unknown project"}
+        if not isinstance(topic, str) or not topic.strip() or len(topic) > 100:
+            return 400, {"error": "Topic is empty or too long"}
+        if not isinstance(region, str) or not isinstance(days, int) or isinstance(days, bool):
+            return 400, {"error": "Region or days is invalid"}
+        with self.lock:
+            if self.trend_calls >= MAX_TRENDS_PER_RUN:
+                return 429, {"error": "Trend search limit reached for this session. Restart the dashboard to reset."}
+            self.trend_calls += 1
+        res = self.trends_fn(topic, region, days)
+        if not isinstance(res, dict) or "error" in res:
+            return 502, {"error": str(res.get("error", "Trend search failed")) if isinstance(res, dict) else "Trend search failed"}
+        return 200, {"project": project, "trends": res}
+
     def channel_get(self, data):
         project = data.get("project")
         if project not in PROJECTS:
@@ -310,6 +340,8 @@ class DashboardApi:
                     return self.channel_set(data)
                 if path == "/api/seo":
                     return self.seo(data)
+                if path == "/api/trends":
+                    return self.trends(data)
         except Exception as e:
             return 500, {"error": "Server error: " + type(e).__name__}
         return 404, {"error": "Not found"}
