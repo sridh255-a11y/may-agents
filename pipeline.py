@@ -48,7 +48,8 @@ def family_of(item):
     return ""
 
 
-def run_request(project, request, notes, manager_fn=None, writer_fn=None, checker_fn=None, gate_fn=None, style_fn=None):
+def run_request(project, request, notes, manager_fn=None, writer_fn=None, checker_fn=None, gate_fn=None, style_fn=None, auto_fn=None):
+    use_auto = auto_fn is not None or manager_fn is None
     manager_fn = manager_fn or _real_manager
     use_style = writer_fn is None or style_fn is not None
     writer_fn = writer_fn or _real_writer
@@ -70,7 +71,19 @@ def run_request(project, request, notes, manager_fn=None, writer_fn=None, checke
         "message": "",
     }
     try:
-        routed = manager_fn(request)
+        auto_info = None
+        if use_auto:
+            import agent_auto
+            if agent_auto.is_auto(request):
+                prep = (auto_fn or agent_auto.prepare)(project)
+                if not isinstance(prep, dict) or "error" in prep:
+                    out["route"] = "auto"
+                    out["error"] = str(prep.get("error")) if isinstance(prep, dict) else "Research returned a bad result."
+                    return out
+                request = prep["request"]
+                notes = prep["notes"]
+                auto_info = prep
+        routed = manager_fn(request) if auto_info is None else {"route": "writer", "reason": "Trending topic: " + str(auto_info["topic"])}
         if isinstance(routed, dict):
             out["route"] = routed.get("route")
             out["reason"] = str(routed.get("reason", ""))
@@ -119,6 +132,8 @@ def run_request(project, request, notes, manager_fn=None, writer_fn=None, checke
             "checker_family": checker_family,
             "independent": independent,
         }
+        if auto_info is not None:
+            payload["auto"] = {"topic": auto_info["topic"], "brief": auto_info["brief"]}
         out["gate_id"] = gate_fn(project, "Writer", payload)
         out["message"] = "Checker verdict: " + label + ". Added to the approval gate as pending."
     except Exception as e:
