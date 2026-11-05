@@ -35,6 +35,18 @@ def _sections(sections):
     return out[:MAX_SECTIONS]
 
 
+def _shingles(text, n=6):
+    w = agent_writer.clean(text).split()
+    return set(" ".join(w[i:i + n]) for i in range(max(len(w) - n + 1, 0)))
+
+
+def _overlap(new, old):
+    a = _shingles(new)
+    if not a:
+        return 0.0
+    return len(a & _shingles(old)) / len(a)
+
+
 def write_long(topic, notes, sections=None, style="", chain_fn=None, models=None):
     if not isinstance(topic, str) or not topic.strip() or not isinstance(notes, str) or not notes.strip():
         return {"error": "Topic and source notes are both needed."}
@@ -77,6 +89,9 @@ def write_long(topic, notes, sections=None, style="", chain_fn=None, models=None
         text = str(data.get("script", "")).strip()
         if not text or agent_writer.clean(text) == "not found":
             skipped.append(label)
+            continue
+        if parts and _overlap(text, " ".join(parts)) >= 0.4:
+            skipped.append(label + " (repeats earlier text)")
             continue
         parts.append(text)
         cl = data.get("claims", [])

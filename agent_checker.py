@@ -41,8 +41,15 @@ def checker_models(env=None):
     return env_list("CHECKER_MODELS", DEFAULT_CHECKER_MODELS, env=env)
 
 
+def _norm(n):
+    n = n.rstrip(".,")
+    if re.fullmatch(r"\d{1,3}(,\d{3})+", n):
+        n = n.replace(",", "")
+    return n
+
+
 def numbers_in(text):
-    return set(n.rstrip(".,") for n in NUMBER.findall(str(text)))
+    return set(_norm(n) for n in NUMBER.findall(str(text)))
 
 
 def code_checks(writer_result, notes):
