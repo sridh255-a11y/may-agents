@@ -80,8 +80,13 @@ def run_request(project, request, notes, manager_fn=None, writer_fn=None, checke
                     out["route"] = "auto"
                     out["error"] = str(prep.get("error")) if isinstance(prep, dict) else "Research returned a bad result."
                     return out
-                request = prep["request"]
-                notes = prep["notes"]
+                own = str(notes or "").strip()
+                if own:
+                    request = "Write a script about the topic '" + str(prep["topic"]) + "' using only the notes. The YouTube data lines show what is working, so use them only to choose the angle."
+                    notes = own + "\n\nYOUTUBE DATA:\n" + prep["notes"]
+                else:
+                    request = prep["request"]
+                    notes = prep["notes"]
                 auto_info = prep
         routed = manager_fn(request) if auto_info is None else {"route": "writer", "reason": "Trending topic: " + str(auto_info["topic"])}
         if isinstance(routed, dict):
