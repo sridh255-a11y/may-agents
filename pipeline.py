@@ -48,7 +48,7 @@ def family_of(item):
     return ""
 
 
-def run_request(project, request, notes, manager_fn=None, writer_fn=None, checker_fn=None, gate_fn=None, style_fn=None, auto_fn=None):
+def run_request(project, request, notes, manager_fn=None, writer_fn=None, checker_fn=None, gate_fn=None, style_fn=None, auto_fn=None, long_fn=None):
     use_auto = auto_fn is not None or manager_fn is None
     manager_fn = manager_fn or _real_manager
     use_style = writer_fn is None or style_fn is not None
@@ -84,6 +84,8 @@ def run_request(project, request, notes, manager_fn=None, writer_fn=None, checke
                 if own:
                     request = "Write a script about the topic '" + str(prep["topic"]) + "' using only the notes. The YouTube data lines show what is working, so use them only to choose the angle."
                     notes = own + "\n\nYOUTUBE DATA:\n" + prep["notes"]
+                    prep["long"] = True
+                    prep["sections"] = ((prep.get("brief") or {}).get("outline") or {}).get("outline")
                 else:
                     request = prep["request"]
                     notes = prep["notes"]
@@ -100,7 +102,13 @@ def run_request(project, request, notes, manager_fn=None, writer_fn=None, checke
                 out["message"] = "The Manager could not route this request."
             return out
         style = style_fn(project) if use_style else ""
-        written = writer_fn(request, notes, style=style) if style else writer_fn(request, notes)
+        if auto_info is not None and auto_info.get("long"):
+            if long_fn is None:
+                import agent_longwriter
+                long_fn = agent_longwriter.write_long
+            written = long_fn(str(auto_info["topic"]), notes, sections=auto_info.get("sections"), style=style)
+        else:
+            written = writer_fn(request, notes, style=style) if style else writer_fn(request, notes)
         out["writer_result"] = written
         if not isinstance(written, dict):
             out["error"] = "Writer failed: bad result"
