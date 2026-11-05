@@ -53,7 +53,7 @@ def rank_topics(reports):
     return ranked
 
 
-def build_brief(project, topics=None, region="US", days=30, length="8-15", fetch_fn=None, now=None, settings_fn=None):
+def build_brief(project, topics=None, region="US", days=30, length="8-15", fetch_fn=None, now=None, settings_fn=None, snap_fn=None, growth_fn=None):
     if length not in LENGTHS:
         return {"error": "Length is invalid."}
     if topics is None:
@@ -78,6 +78,23 @@ def build_brief(project, topics=None, region="US", days=30, length="8-15", fetch
     if not reports:
         return {"error": "Every trend search failed. " + "; ".join(errors)}
     ranked = rank_topics(reports)
+    track = fetch_fn is None or snap_fn is not None
+    if track:
+        try:
+            import growth_tracker
+            if snap_fn is None:
+                growth_tracker.refresh()
+            snap_fn = snap_fn or growth_tracker.record
+            growth_fn = growth_fn or growth_tracker.growth
+            views_now = {v["id"]: v["views"] for r in ranked for v in r["videos"] if v.get("id")}
+            snap_fn(views_now)
+            g = growth_fn(list(views_now))
+            for r in ranked:
+                for v in r["videos"]:
+                    if v.get("id") in g:
+                        v["growth"] = g[v["id"]]
+        except Exception as e:
+            errors.append("Growth tracking skipped: " + redact(type(e).__name__))
     return {"project": project, "region": region, "days": days, "length": length, "ranked": ranked,
             "pick": ranked[0] if ranked else None, "errors": errors,
             "message": "" if ranked else "No topic had enough strong videos. Try a longer period or other topics."}

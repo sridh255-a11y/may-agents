@@ -176,7 +176,7 @@
         a.rel = "noopener noreferrer";
         a.textContent = (i + 1) + ". " + v.title;
         box.appendChild(a);
-        box.appendChild(el("small", "", " " + v.views + " views | " + fmtDur(v.seconds) + " | uploaded " + v.uploaded + " | subs " + v.subs));
+        box.appendChild(el("small", "", " " + v.views + " views | " + fmtDur(v.seconds) + " | uploaded " + v.uploaded + " | subs " + v.subs + (v.growth ? " | growth +" + v.growth.delta + " views, " + v.growth.per_day + "/day over " + v.growth.days + " days" : " | growth: needs a second run 6+ hours later")));
         out.appendChild(box);
       });
       var o = b.outline || {};
